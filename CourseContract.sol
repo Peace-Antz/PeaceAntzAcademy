@@ -4,49 +4,35 @@ pragma solidity ^0.8.0;
 
 contract CourseContract {
 
-    bool public courseStatus;
-    bool public signupStatus;
-    uint public payment;
-    uint public studentStake;
+    bool public courseStatus; //Is determined by the teacher. Can be used with signup status to give 4 states: pending, open, in progress and closed.
+    bool public signupStatus; //Once payment is set by teacher, enrollment can begin
+    uint public payment; //Amount requested by the teacher, also the amount that needs to be sponsored to start the course
+    uint public studentStake; //Amount student needs to stake to enroll in the course, possible platform rewards for staking in future versions?
+    uint public sponsorshipTotal; //Total Sponsorship amount
+    address public peaceAntzCouncil = 0xdD870fA1b7C4700F2BD7f44238821C26f7392148; //address that will be sent stake of students who dropout
+//0x6bE3d955Cb6cF9A52Bc3c92F453309931012D386
 
 
+//Events for pretty much each function
     event GrantRole(bytes32 indexed role, address indexed account);
     event RevokeRole(bytes32 indexed role, address indexed account);
     event DropOut(bytes32 indexed role, address indexed account);
     event CourseStatus(bool indexed courseStatus);
     event SignupStatus(bool indexed signupStatus);
     event StudentEnrolled(address indexed account);
+    event Sponsored(uint indexed sponsorDeposit, address indexed account);
     event CourseCompleted(bool indexed pass, address indexed account);
 
-    // struct Stake {
-    //     uint72 tokenAmount;                   // Amount of tokens locked in a stake                                                                            
-    //     uint128 expectedStakingRewardPoints;  // The amount of RewardPoints the stake will earn if not unlocked prematurely    
-    // }
-
-    //role => account = bool
+    //role => account = bool to keep track of roles of addresses
     mapping(bytes32 => mapping(address => bool)) public roles;
 
-    //Staking & Sponsoring
+    //Need to track each address that deposits as a sponsor or student
     mapping (address => uint) public studentDeposit;
     mapping (address => uint) public sponsorDeposit;
+    //track pass/fail for each student
     mapping (address => bool) public courseCompleted;
-    // // Function to receive Ether. msg.data must be empty
-    // receive() external payable {}
-    // // Fallback function is called when msg.data is not empty
-    // fallback() external payable {}
 
-    // function getBalance() public view returns (uint) {
-    //     return address(this).balance;
-    // }
-    
-    // function sendViaCall(address payable _to) public payable {
-    //     // Call returns a boolean value indicating success or failure.
-    //     // This is the current recommended method to use.
-    //     (bool sent, bytes memory data) = _to.call{value: msg.value}("");
-    //     require(sent, "Failed to send Ether");
-    // }
-
-
+//Different Roles stored as bytes32 NOTE: ADMIN will be set to the multisig address.
     //0xdf8b4c520ffe197c5343c6f5aec59570151ef9a492f2c624fd45ddde6135ec42
     bytes32 private constant ADMIN = keccak256(abi.encodePacked("ADMIN"));
     //0x534b5b9fe29299d99ea2855da6940643d68ed225db268dc8d86c1f38df5de794
@@ -56,11 +42,12 @@ contract CourseContract {
     //0x5f0a5f78118b6e0b700e0357ae3909aaafe8fa706a075935688657cf4135f9a9
     bytes32 private constant SPONSOR = keccak256(abi.encodePacked("SPONSOR"));
 
+//Access control modifier
     modifier onlyRole(bytes32 _role){
         require(roles[_role][msg.sender], "not authorized");
         _;
     }
-
+//Sets the contract creator as the TEACHER and the multisig wallet as the ADMIN
     constructor() payable{
         _grantRole(ADMIN, msg.sender);
         _grantRole(TEACHER, msg.sender);
@@ -82,15 +69,18 @@ contract CourseContract {
     }
 
 //Teacher Functions
-
+    //"Start Course" Button, locks in enrollments and sponsorship payments
     function updateCourseStatus() external onlyRole(TEACHER){
+    
         courseStatus=true;
         signupStatus=false;
         emit CourseStatus(true);
         emit SignupStatus(false);
     }
-
+    //Teach sets how much they want to be paid, allows enrollment to start, cannot be changed.
     function setAmount(uint _payment) external onlyRole(TEACHER){
+        require(signupStatus=false, "You cannot change change payment after it has been set, please create another course.");
+        require(courseStatus=false, "You cannot change the payment.");
         payment = _payment;
         unchecked {
             studentStake= _payment/15;
@@ -100,7 +90,7 @@ contract CourseContract {
     }
     
     function passStudent(address _account) external onlyRole(TEACHER){
-
+        require(roles[STUDENT][_account],"You are not enrolled!");
         courseCompleted[_account]=true;
         emit CourseCompleted(true,_account);
     }
@@ -116,26 +106,60 @@ contract CourseContract {
         require(signupStatus == true, "Enrollment Closed");
         studentStake = msg.value;
         roles[STUDENT][msg.sender] = true;
+        studentDeposit[msg.sender] = studentStake;
         emit StudentEnrolled(msg.sender);
     }
-    function withdraw () external {
+
+    function withdraw () external payable {
         require(roles[STUDENT][msg.sender],"You are not enrolled!");
         require(address(this).balance >0, "No balance available");
         require(courseStatus == false, "You have to dropout because the course has started.");
-        address sender = address(msg.sender);
-        sender.transfer(studentStake);
+        (bool success, ) = msg.sender.call{value: studentStake}("");
+        require(success, "Failed to withdraw :(");
+        studentDeposit[msg.sender] = 0;
+        roles[STUDENT][msg.sender] = false;
+        emit RevokeRole(STUDENT, msg.sender);
 
     }
 
-    function dropOut(bytes32 _role, address _account) external onlyRole(STUDENT){
-        //need to add sending staked amout to multisig address
-        roles[_role][_account] = false;
-        emit DropOut(_role, _account);
+    function dropOut() external payable onlyRole(STUDENT){
+        require(courseStatus == true, "Course has not started yet, feel free to simply withdraw :)");
+        require(courseCompleted[msg.sender] == false, "You have completed the course already!");
+        (bool success, ) = peaceAntzCouncil.call{value: studentStake}("");
+        require(success, "Failed to drop course :(");
+        roles[STUDENT][msg.sender] = false;
+        emit DropOut(STUDENT, msg.sender);
     }
 
 
 //Sponsor Functions
-    function sponsor(uint _sponsor) external {}
-    function unsponsor(uint _unsponsor) external {}
+    //Allows sponsor to send ETH to contract and sill remember the amount of each sponsor and total amount.
+    function sponsor() external payable {
+        require(msg.value >0, "Please input amount you wish to sponsor");
+        require(msg.value<(payment-sponsorshipTotal), "Please input the Sponsorship amount needed or less");
+        require(courseStatus = false, "Course has already begun.");
+        roles[SPONSOR][msg.sender] = true;
+        uint totalSponsored = sponsorDeposit[msg.sender] + msg.value;
+        assert(totalSponsored >= sponsorDeposit[msg.sender]);
+        sponsorDeposit[msg.sender] = totalSponsored;
+        sponsorshipTotal = sponsorshipTotal + totalSponsored;
+        emit Sponsored(msg.value, msg.sender);
+    }
+    //Allows user to withdraw whatever they sponsored before the course begins
+    function unsponsor() external payable onlyRole(SPONSOR){
+        require(msg.value>0,"Please input an amount to unsponsor");
+        require(msg.value<=sponsorDeposit[msg.sender], "That is more than you have sponsored");
+        require(courseStatus = false, "Course has already begun.");
+        (bool success, ) = msg.sender.call{value: msg.value}("");
+        require(success, "Failed to unsponsor");
+        uint totalSponsored = sponsorDeposit[msg.sender] - msg.value;
+        assert(totalSponsored >= sponsorDeposit[msg.sender]);
+        sponsorDeposit[msg.sender] = totalSponsored;
+        if (sponsorDeposit[msg.sender] == 0){
+        roles[STUDENT][msg.sender] = false;
+        emit RevokeRole(SPONSOR, msg.sender);
+        }
+
+    }
 
 }
