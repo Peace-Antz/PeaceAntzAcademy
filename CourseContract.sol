@@ -71,7 +71,7 @@ contract CourseContract {
 //Teacher Functions
     //"Start Course" Button, locks in enrollments and sponsorship payments
     function updateCourseStatus() external onlyRole(TEACHER){
-    
+        require(payment == sponsorshipTotal, "Course is has not been fully sponsored yet :(");
         courseStatus=true;
         signupStatus=false;
         emit CourseStatus(true);
@@ -79,8 +79,8 @@ contract CourseContract {
     }
     //Teach sets how much they want to be paid, allows enrollment to start, cannot be changed.
     function setAmount(uint _payment) external onlyRole(TEACHER){
-        require(signupStatus=false, "You cannot change change payment after it has been set, please create another course.");
-        require(courseStatus=false, "You cannot change the payment.");
+        require(signupStatus==false, "You cannot change change payment after it has been set, please create another course.");
+        require(courseStatus==false, "You cannot change the payment.");
         payment = _payment;
         unchecked {
             studentStake= _payment/15;
@@ -90,19 +90,28 @@ contract CourseContract {
     }
     
     function passStudent(address _account) external onlyRole(TEACHER){
-        require(roles[STUDENT][_account],"You are not enrolled!");
+        require(roles[STUDENT][_account],"Not a student!");
         courseCompleted[_account]=true;
         emit CourseCompleted(true,_account);
     }
-    function bootStudent(address _account) external{}
-    function claimPayment(uint _payment) external{}
+    function bootStudent(address _account) external onlyRole(TEACHER){
+        (bool success, ) = peaceAntzCouncil.call{value: studentStake}("");
+        require(success, "Failed to boot >:(");
+        roles[STUDENT][_account] = false;
+        emit DropOut(STUDENT, _account);
+    }
+    function claimPayment() external onlyRole(TEACHER){
+        //require(what is needed here? hmm);
+        (bool success, ) = msg.sender.call{value: payment}("");
+        require(success, "Failed to boot >:(");
+    }
 
 
 //Student Functions
-    function enroll()external payable{ 
-        require(msg.value == studentStake, "Please Stake the Correct Amount");
-        require(courseStatus == false, "Course has already started :(");
+    function enroll()external payable{
+        require(courseStatus == false, "Course has already started :("); 
         require(!roles[STUDENT][msg.sender],"You are enrolled already!");
+        require(msg.value == studentStake, "Please Stake the Correct Amount");
         require(signupStatus == true, "Enrollment Closed");
         studentStake = msg.value;
         roles[STUDENT][msg.sender] = true;
@@ -114,6 +123,8 @@ contract CourseContract {
         require(roles[STUDENT][msg.sender],"You are not enrolled!");
         require(address(this).balance >0, "No balance available");
         require(courseStatus == false, "You have to dropout because the course has started.");
+        require(msg.value == 0,"Leave value empty.");
+
         (bool success, ) = msg.sender.call{value: studentStake}("");
         require(success, "Failed to withdraw :(");
         studentDeposit[msg.sender] = 0;
@@ -135,31 +146,36 @@ contract CourseContract {
 //Sponsor Functions
     //Allows sponsor to send ETH to contract and sill remember the amount of each sponsor and total amount.
     function sponsor() external payable {
+        require(courseStatus == false, "Course has already begun.");
+        require(payment>sponsorshipTotal,"This course is fully sponsored :)");
         require(msg.value >0, "Please input amount you wish to sponsor");
-        require(msg.value<(payment-sponsorshipTotal), "Please input the Sponsorship amount needed or less");
-        require(courseStatus = false, "Course has already begun.");
+        require(msg.value<=(payment-sponsorshipTotal), "Please input the Sponsorship amount needed or less");
         roles[SPONSOR][msg.sender] = true;
-        uint totalSponsored = sponsorDeposit[msg.sender] + msg.value;
-        assert(totalSponsored >= sponsorDeposit[msg.sender]);
-        sponsorDeposit[msg.sender] = totalSponsored;
-        sponsorshipTotal = sponsorshipTotal + totalSponsored;
-        emit Sponsored(msg.value, msg.sender);
+        uint currentDeposit = sponsorDeposit[msg.sender] + msg.value;
+        uint _sponsorshipTotal = sponsorshipTotal + msg.value;
+        assert(_sponsorshipTotal >= sponsorshipTotal);
+        sponsorshipTotal = _sponsorshipTotal;
+        sponsorDeposit[msg.sender] = currentDeposit;
+        emit Sponsored(currentDeposit, msg.sender);
     }
     //Allows user to withdraw whatever they sponsored before the course begins
-    function unsponsor() external payable onlyRole(SPONSOR){
-        require(msg.value>0,"Please input an amount to unsponsor");
-        require(msg.value<=sponsorDeposit[msg.sender], "That is more than you have sponsored");
-        require(courseStatus = false, "Course has already begun.");
-        (bool success, ) = msg.sender.call{value: msg.value}("");
-        require(success, "Failed to unsponsor");
-        uint totalSponsored = sponsorDeposit[msg.sender] - msg.value;
-        assert(totalSponsored >= sponsorDeposit[msg.sender]);
-        sponsorDeposit[msg.sender] = totalSponsored;
-        if (sponsorDeposit[msg.sender] == 0){
-        roles[STUDENT][msg.sender] = false;
-        emit RevokeRole(SPONSOR, msg.sender);
+    function unsponsor(address payable _to, uint _amount) external payable onlyRole(SPONSOR){
+        require(courseStatus == false, "Course has already begun.");
+        require(_amount>0,"Please input an amount to unsponsor");
+        require(_amount<=sponsorDeposit[_to], "That is more than you have sponsored");
+
+        (bool success, ) = _to.call{value: _amount}("");
+        require(success, "Failed to withdraw :(");
+
+        uint currentDeposit = sponsorDeposit[_to] - _amount;
+        assert(currentDeposit <= sponsorDeposit[_to]);
+        uint _sponsorshipTotal = sponsorshipTotal - _amount;
+        assert(_sponsorshipTotal <= sponsorshipTotal);
+        sponsorshipTotal = _sponsorshipTotal;
+        sponsorDeposit[_to]=currentDeposit;
+        if (sponsorDeposit[_to] == 0){
+        roles[STUDENT][_to] = false;
+        emit RevokeRole(SPONSOR, _to);
         }
-
     }
-
 }
