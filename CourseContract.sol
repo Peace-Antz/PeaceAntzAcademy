@@ -5,7 +5,7 @@ pragma solidity ^0.8.0;
 contract CourseContract {
 
     bool public courseStatus; //Is determined by the teacher. Can be used with signup status to give 4 states: pending, open, in progress and closed.
-    bool public signupStatus; //Once payment is set by teacher, enrollment can begin
+    bool public paymentStatus; //Once payment is set by teacher, enrollment can begin
     uint public payment; //Amount requested by the teacher, also the amount that needs to be sponsored to start the course
     uint public studentStake; //Amount student needs to stake to enroll in the course, possible platform rewards for staking in future versions?
     uint public sponsorshipTotal; //Total Sponsorship amount
@@ -18,7 +18,7 @@ contract CourseContract {
     event RevokeRole(bytes32 indexed role, address indexed account);
     event DropOut(bytes32 indexed role, address indexed account);
     event CourseStatus(bool indexed courseStatus);
-    event SignupStatus(bool indexed signupStatus);
+    event PaymentStatus(bool indexed paymentStatus);
     event StudentEnrolled(address indexed account);
     event Sponsored(uint indexed sponsorDeposit, address indexed account);
     event CourseCompleted(bool indexed pass, address indexed account);
@@ -73,25 +73,31 @@ contract CourseContract {
     function updateCourseStatus() external onlyRole(TEACHER){
         require(payment == sponsorshipTotal, "Course is has not been fully sponsored yet :(");
         courseStatus=true;
-        signupStatus=false;
+        paymentStatus=false;
         emit CourseStatus(true);
-        emit SignupStatus(false);
+        emit PaymentStatus(false);
     }
     //Teach sets how much they want to be paid, allows enrollment to start, cannot be changed.
     function setAmount(uint _payment) external onlyRole(TEACHER){
-        require(signupStatus==false, "You cannot change change payment after it has been set, please create another course.");
+        require(paymentStatus==false, "You cannot change change payment after it has been set, please create another course.");
         require(courseStatus==false, "You cannot change the payment.");
         payment = _payment;
         unchecked {
             studentStake= _payment/15;
         }
-        signupStatus=true;
-        emit SignupStatus(true);
+        paymentStatus=true;
+        emit PaymentStatus(true);
     }
     
     function passStudent(address _account) external onlyRole(TEACHER){
         require(roles[STUDENT][_account],"Not a student!");
+        require(courseStatus==true);
+        //send money to student
+        (bool success, ) = _account.call{value: studentStake}("");
+        require(success, "Failed to send stake back to student");
         courseCompleted[_account]=true;
+        paymentStatus = true;
+        emit PaymentStatus(true);
         emit CourseCompleted(true,_account);
     }
     function bootStudent(address _account) external onlyRole(TEACHER){
@@ -101,9 +107,10 @@ contract CourseContract {
         emit DropOut(STUDENT, _account);
     }
     function claimPayment() external onlyRole(TEACHER){
-        //require(what is needed here? hmm);
+        require(courseStatus == true,"You have to start and complete the course to collect sponsor payment.");
+        require(paymentStatus == true,"Please pass/fail a student to complete the course.");
         (bool success, ) = msg.sender.call{value: payment}("");
-        require(success, "Failed to boot >:(");
+        require(success, "Failed to claim :(");
     }
 
 
@@ -112,7 +119,7 @@ contract CourseContract {
         require(courseStatus == false, "Course has already started :("); 
         require(!roles[STUDENT][msg.sender],"You are enrolled already!");
         require(msg.value == studentStake, "Please Stake the Correct Amount");
-        require(signupStatus == true, "Enrollment Closed");
+        require(paymentStatus == true, "Enrollment Closed");
         studentStake = msg.value;
         roles[STUDENT][msg.sender] = true;
         studentDeposit[msg.sender] = studentStake;
@@ -163,6 +170,7 @@ contract CourseContract {
         require(courseStatus == false, "Course has already begun.");
         require(_amount>0,"Please input an amount to unsponsor");
         require(_amount<=sponsorDeposit[_to], "That is more than you have sponsored");
+        require(_to == msg.sender,"You are not the owner of this address.");
 
         (bool success, ) = _to.call{value: _amount}("");
         require(success, "Failed to withdraw :(");
