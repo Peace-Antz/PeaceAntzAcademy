@@ -9,19 +9,21 @@ contract CourseContract {
     uint public payment; //Amount requested by the teacher, also the amount that needs to be sponsored to start the course
     uint public studentStake; //Amount student needs to stake to enroll in the course, possible platform rewards for staking in future versions?
     uint public sponsorshipTotal; //Total Sponsorship amount
+    uint public paymentTimestamp; //Timestamp of payment of Teacher.
     address public peaceAntzCouncil = 0xdD870fA1b7C4700F2BD7f44238821C26f7392148; //address that will be sent stake of students who dropout
 //0x6bE3d955Cb6cF9A52Bc3c92F453309931012D386
 
 
 //Events for pretty much each function
-    event GrantRole(bytes32 indexed role, address indexed account);
-    event RevokeRole(bytes32 indexed role, address indexed account);
-    event DropOut(bytes32 indexed role, address indexed account);
-    event CourseStatus(bool indexed courseStatus);
-    event PaymentStatus(bool indexed paymentStatus);
-    event StudentEnrolled(address indexed account);
+    event GrantRole(bytes32 role, address account);
+    event RevokeRole(bytes32 role, address account);
+    event DropOut(address indexed account);
+    event CourseStatus(bool courseStatus);
+    event PaymentStatus(bool paymentStatus);
+    event StudentEnrolled(address account);
     event Sponsored(uint indexed sponsorDeposit, address indexed account);
     event CourseCompleted(bool indexed pass, address indexed account);
+    event ClaimPayment(uint paymentTimestamp);
 
     //role => account = bool to keep track of roles of addresses
     mapping(bytes32 => mapping(address => bool)) public roles;
@@ -49,7 +51,7 @@ contract CourseContract {
     }
 //Sets the contract creator as the TEACHER and the multisig wallet as the ADMIN
     constructor() payable{
-        _grantRole(ADMIN, msg.sender);
+        _grantRole(ADMIN, msg.sender); //set to multisig address upon deployment
         _grantRole(TEACHER, msg.sender);
     }
 
@@ -77,7 +79,7 @@ contract CourseContract {
         emit CourseStatus(true);
         emit PaymentStatus(false);
     }
-    //Teach sets how much they want to be paid, allows enrollment to start, cannot be changed.
+    //Teacher sets how much they want to be paid, allows enrollment to start, cannot be changed.
     function setAmount(uint _payment) external onlyRole(TEACHER){
         require(paymentStatus==false, "You cannot change change payment after it has been set, please create another course.");
         require(courseStatus==false, "You cannot change the payment.");
@@ -88,34 +90,39 @@ contract CourseContract {
         paymentStatus=true;
         emit PaymentStatus(true);
     }
-    
+    //Teacher passes student which completes the course and pays back each student that passes.
     function passStudent(address _account) external onlyRole(TEACHER){
         require(roles[STUDENT][_account],"Not a student!");
         require(courseStatus==true);
+        courseCompleted[_account]=true;
+        paymentStatus = true;
         //send money to student
         (bool success, ) = _account.call{value: studentStake}("");
         require(success, "Failed to send stake back to student");
-        courseCompleted[_account]=true;
-        paymentStatus = true;
         emit PaymentStatus(true);
         emit CourseCompleted(true,_account);
     }
+    //Teacher can also boot student which sends student's stake to multisig.
     function bootStudent(address _account) external onlyRole(TEACHER){
+        require(roles[STUDENT][_account] = true,"Address is not enrolled :/");
+        roles[STUDENT][_account] = false;
         (bool success, ) = peaceAntzCouncil.call{value: studentStake}("");
         require(success, "Failed to boot >:(");
-        roles[STUDENT][_account] = false;
-        emit DropOut(STUDENT, _account);
+        emit DropOut(_account);
     }
+    //After the first student is passed the teacher can claim the sponsored payment at will.
     function claimPayment() external onlyRole(TEACHER){
         require(courseStatus == true,"You have to start and complete the course to collect sponsor payment.");
-        require(paymentStatus == true,"Please pass/fail a student to complete the course.");
+        require(paymentStatus == true,"Please pass a student to complete the course.");
         (bool success, ) = msg.sender.call{value: payment}("");
         require(success, "Failed to claim :(");
+        emit ClaimPayment(block.timestamp);
     }
 
-
 //Student Functions
+    //Student enroll by staking the studentStake amount, they can withdraw if they want but stake is locked once the course starts.
     function enroll()external payable{
+        require(!roles[TEACHER][msg.sender],"Teachers cannot enroll in their own course!");
         require(courseStatus == false, "Course has already started :("); 
         require(!roles[STUDENT][msg.sender],"You are enrolled already!");
         require(msg.value == studentStake, "Please Stake the Correct Amount");
@@ -125,17 +132,16 @@ contract CourseContract {
         studentDeposit[msg.sender] = studentStake;
         emit StudentEnrolled(msg.sender);
     }
-
+    //Students can withdraw before the course starts, once the course starts, the student has to pass the course to get stake back.
     function withdraw () external payable {
         require(roles[STUDENT][msg.sender],"You are not enrolled!");
         require(address(this).balance >0, "No balance available");
         require(courseStatus == false, "You have to dropout because the course has started.");
         require(msg.value == 0,"Leave value empty.");
-
-        (bool success, ) = msg.sender.call{value: studentStake}("");
-        require(success, "Failed to withdraw :(");
         studentDeposit[msg.sender] = 0;
         roles[STUDENT][msg.sender] = false;
+        (bool success, ) = msg.sender.call{value: studentStake}("");
+        require(success, "Failed to withdraw :(");
         emit RevokeRole(STUDENT, msg.sender);
 
     }
@@ -146,7 +152,7 @@ contract CourseContract {
         (bool success, ) = peaceAntzCouncil.call{value: studentStake}("");
         require(success, "Failed to drop course :(");
         roles[STUDENT][msg.sender] = false;
-        emit DropOut(STUDENT, msg.sender);
+        emit DropOut(msg.sender);
     }
 
 
