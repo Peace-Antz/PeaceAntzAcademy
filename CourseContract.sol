@@ -145,7 +145,7 @@ contract CourseContract {
         emit RevokeRole(STUDENT, msg.sender);
 
     }
-
+    //Students can dropout after the course starts but it will get logged and stake will be sent to Peace Antz Council multisig.
     function dropOut() external payable onlyRole(STUDENT){
         require(courseStatus == true, "Course has not started yet, feel free to simply withdraw :)");
         require(courseCompleted[msg.sender] == false, "You have completed the course already!");
@@ -188,7 +188,7 @@ contract CourseContract {
         sponsorshipTotal = _sponsorshipTotal;
         sponsorDeposit[_to]=currentDeposit;
         if (sponsorDeposit[_to] == 0){
-        roles[STUDENT][_to] = false;
+        roles[SPONSOR][_to] = false;
         emit RevokeRole(SPONSOR, _to);
         }
     }
