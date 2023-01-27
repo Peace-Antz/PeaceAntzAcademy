@@ -31,3 +31,5 @@ Conclusion:
 The decentralized school contract is an innovative solution that can revolutionize the way we think about online learning and talent scouting. It provides a transparent, decentralized and efficient mechanism for connecting teachers, sponsors, and students on the blockchain. The contract can benefit all parties involved, and it can be easily implemented on any blockchain platform that supports smart contracts.
 
 Please note that this is a rough proposal, with more research and development required to build a full-featured and functional smart contract.
+
+![image](https://user-images.githubusercontent.com/16519706/215215002-dac1fc4b-5eeb-4333-b546-9744f003bc46.png)
